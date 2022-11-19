@@ -25,7 +25,9 @@
 ;; `infer-splitpoints` and `combine-alts` are split so the mainloop
 ;; can insert a timeline break between them.
 
+
 (define (infer-splitpoints alts ctx)
+  ;; alt:alternative.rkt context:types.rkt
   (timeline-event! 'regimes)
   (timeline-push! 'inputs (map (compose ~a program-body alt-program) alts))
   (define branch-exprs
@@ -60,7 +62,7 @@
   (define alt-critexprs (map (compose all-critical-subexpressions alt-program) alts))
   (define start-critexprs (all-critical-subexpressions (*start-prog*)))
   ;; We can only binary search if the branch expression is critical
-  ;; for all of the alts and also for the start prgoram.
+  ;; for all of the alts and also for the start program.
   (filter
    (λ (e) (equal? (type-of e ctx) 'real))
    (set-intersect start-critexprs (apply set-union alt-critexprs))))

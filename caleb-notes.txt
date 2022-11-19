@@ -1,0 +1,8 @@
+have some baseline minimize error is just looping through all points and finding most accurate
+expression for each point.
+
+why don't we just pareto-optimize expressions at every point? seems better than the O(n^2) approach.
+
+I'm imagining for each point we have a list of pareto-optimal expressions, then we squash
+adjacent expressions to create some pareto-optimal interval for each expression.
+Then we can use combinations of those to give us the sets of alternatives.

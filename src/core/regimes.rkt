@@ -25,9 +25,12 @@
 ;; `infer-splitpoints` and `combine-alts` are split so the mainloop
 ;; can insert a timeline break between them.
 
+(define it 0)
 
 (define (infer-splitpoints alts ctx)
   ;; alt:alternative.rkt context:types.rkt
+  (display "call infer-splitpoints\n")
+  (set! it (+ 1 it))
   (timeline-event! 'regimes)
   (timeline-push! 'inputs (map (compose ~a program-body alt-program) alts))
   (define branch-exprs
@@ -35,6 +38,8 @@
         (exprs-to-branch-on alts ctx)
         (program-variables (alt-program (first alts)))))
   (define err-lsts (batch-errors (map alt-program alts) (*pcontext*) ctx))
+  (display (length branch-exprs))
+  (display "\n")
   (define options
     ;; We can only combine alts for which the branch expression is
     ;; critical, to enable binary search.
@@ -89,8 +94,12 @@
     expr))
 
 (define (option-on-expr alts err-lsts expr ctx)
+  (display "call option-on-expr\n")
   (define repr (repr-of expr ctx))
   (define timeline-stop! (timeline-start! 'times (~a expr)))
+  (set! it (+ it 1))
+  (display it)
+  (display ": ")
 
   (define vars (program-variables (alt-program (first alts))))
   (define pts (for/list ([(pt ex) (in-pcontext (*pcontext*))]) pt))
@@ -108,6 +117,8 @@
                              (for/list ([val (cdr splitvals*)] [prev splitvals*])
                                (</total prev val repr))))
   (define split-indices (err-lsts->split-indices bit-err-lsts* can-split?))
+  (display split-indices)
+  (display "\n")
   (define out (option split-indices alts pts* expr (pick-errors split-indices pts* err-lsts* repr)))
   (timeline-stop!)
   (timeline-push! 'branch (~a expr) (errors-score (option-errors out)) (length split-indices))
@@ -163,7 +174,13 @@
   ;; We have num-candidates candidates, each of whom has error lists of length num-points.
   ;; We keep track of the partial sums of the error lists so that we can easily find the cost of regions.
   (define num-candidates (length err-lsts))
+  (display "num-candidates ")
+  (display num-candidates)
+  (display "\n")
   (define num-points (length (car err-lsts)))
+  (display "num-points ")
+  (display num-points)
+  (display "\n")
   (define min-weight num-points)
 
   (define psums (map (compose partial-sums list->vector) err-lsts))

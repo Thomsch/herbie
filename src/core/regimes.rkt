@@ -30,7 +30,7 @@
 (define (infer-splitpoints alts ctx)
   ;; alt:alternative.rkt context:types.rkt
   (display "call infer-splitpoints\n")
-  (set! it (+ 1 it))
+  (set! it 0)
   (timeline-event! 'regimes)
   (timeline-push! 'inputs (map (compose ~a program-body alt-program) alts))
   (define branch-exprs
@@ -38,8 +38,10 @@
         (exprs-to-branch-on alts ctx)
         (program-variables (alt-program (first alts)))))
   (define err-lsts (batch-errors (map alt-program alts) (*pcontext*) ctx))
-  (display (length branch-exprs))
-  (display "\n")
+  (display "branch-exprs: ")
+  (displayln branch-exprs)
+  (display "branch-exprs length: ")
+  (displayln (length branch-exprs))
   (define options
     ;; We can only combine alts for which the branch expression is
     ;; critical, to enable binary search.
@@ -61,6 +63,8 @@
   (timeline-push! 'baseline (apply min (map errors-score err-lsts*)))
   (timeline-push! 'accuracy (errors-score (option-errors best)))
   (timeline-push! 'oracle (errors-score (map (curry apply max) err-lsts)))
+  (display "best: ")
+  (displayln best)
   best)
 
 (define (exprs-to-branch-on alts ctx)
@@ -94,15 +98,16 @@
     expr))
 
 (define (option-on-expr alts err-lsts expr ctx)
-  (display "call option-on-expr\n")
+  (displayln "call option-on-expr #")
   (define repr (repr-of expr ctx))
   (define timeline-stop! (timeline-start! 'times (~a expr)))
   (set! it (+ it 1))
   (display it)
-  (display ": ")
+  (displayln ": ")
 
   (define vars (program-variables (alt-program (first alts))))
   (define pts (for/list ([(pt ex) (in-pcontext (*pcontext*))]) pt))
+  (displayln pts)
   (define fn (eval-prog `(λ ,vars ,expr) 'fl ctx))
   (define splitvals (for/list ([pt pts]) (apply fn pt)))
   (define big-table ; val and errors for each alt, per point
@@ -117,8 +122,8 @@
                              (for/list ([val (cdr splitvals*)] [prev splitvals*])
                                (</total prev val repr))))
   (define split-indices (err-lsts->split-indices bit-err-lsts* can-split?))
-  (display split-indices)
-  (display "\n")
+  (display "split-indices: ")
+  (displayln split-indices)
   (define out (option split-indices alts pts* expr (pick-errors split-indices pts* err-lsts* repr)))
   (timeline-stop!)
   (timeline-push! 'branch (~a expr) (errors-score (option-errors out)) (length split-indices))
@@ -175,12 +180,10 @@
   ;; We keep track of the partial sums of the error lists so that we can easily find the cost of regions.
   (define num-candidates (length err-lsts))
   (display "num-candidates ")
-  (display num-candidates)
-  (display "\n")
+  (displayln num-candidates)
   (define num-points (length (car err-lsts)))
   (display "num-points ")
-  (display num-points)
-  (display "\n")
+  (displayln num-points)
   (define min-weight num-points)
 
   (define psums (map (compose partial-sums list->vector) err-lsts))

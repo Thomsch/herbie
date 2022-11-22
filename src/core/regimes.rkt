@@ -103,7 +103,8 @@
   (define timeline-stop! (timeline-start! 'times (~a expr)))
   (set! it (+ it 1))
   (display it)
-  (displayln ": ")
+  (display " expr: ")
+  (displayln expr)
 
   (define vars (program-variables (alt-program (first alts))))
   (define pts (for/list ([(pt ex) (in-pcontext (*pcontext*))]) pt))

@@ -25,6 +25,72 @@
 ;; `infer-splitpoints` and `combine-alts` are split so the mainloop
 ;; can insert a timeline break between them.
 
+;; returns a list x of cons y_{1 ... num_pts} where every first element in y represents a point 
+;; and every second element in y is a boolean representing whether the corresponding alt
+;; is pareto-optimal on that point.
+(define (per-point-pareto pts cost-lst err-lsts)
+  (let ([num-alts (length (list-ref err-lsts 0))])
+    (for/list ([pt pts] [err-lst err-lsts]) 
+      (cons pt (let pareto-for-point ([pareto-lst (for/list ([i (in-range num-alts)]) #t)] [cur-idx 0])
+        (cond 
+          [(= cur-idx num-alts) pareto-lst]
+          [else (let ([baseline (cons (list-ref cost-lst cur-idx) (list-ref err-lst cur-idx))])
+            (pareto-for-point 
+              (for/list ([is-pareto pareto-lst] [err err-lst] [cost cost-lst])
+                (and is-pareto (pareto? baseline (cons cost err))))
+              (+ cur-idx 1)))]))))))
+
+(define (per-point-optimal err-lsts)
+  (for/list ([err-lst err-lsts])
+    (argmin ((curry list-ref) err-lst) (range (length err-lst)))))
+
+;; takes two cons, and compares the second one to the first, and
+;; determines if the first element subsumes the second in pareto-ness
+;; each con is (cost err)
+(define (pareto? base comp)
+  ;; if the baseline has less error and less than or equal cost, return #f
+  ;; if the baseline has equal error and equal cost, return #t
+  (or (not (and (< (car base) (car comp)) (< (cdr base) (cdr comp)))) 
+    (and (= (car base) (car comp)) (= (cdr base) (cdr comp)))))
+
+(define (check-paretos paretos)
+  (andmap ((curry member) #t) (map cdr paretos)))
+
+(define (sort-optimal opt pts alts err-lsts expr ctx)
+  (define repr (repr-of expr ctx))
+  (define vars (program-variables (alt-program (first alts))))
+  (define fn (eval-prog `(λ ,vars ,expr) 'fl ctx))
+  (match-define (list opt* pts* err-lsts*) (flip-lists (sort (map list opt pts err-lsts) (lambda (x y) (< (apply fn (second x)) (apply fn (second y)))))))
+  (define split-indices (split-optimal opt*))
+  (option split-indices alts pts* expr (pick-errors split-indices pts* err-lsts* repr)))
+
+(define (split-optimal sorted-optimal)
+  ;; invariant: curr is a properly split array for elements to the left and including index i
+  (define opt-length (length sorted-optimal))
+  (let split-section ([curr '()] [lastone #f] [i 0])
+;d    (displayln "split!")
+;d    (displayln lastone)
+;d    (displayln i)
+;d    (displayln curr)
+    ;; return curr if we have processed all elements
+    (if (= i opt-length) curr
+      ;; either make a new split or add to the previous split
+      (cond 
+        [(not lastone) 
+;d          (displayln "come on alex!")
+          (define lt (si (first sorted-optimal) 1)) (split-section (list lt) lt (+ i 1))]
+        [(= (si-cidx lastone) (list-ref sorted-optimal i)) 
+;d          (displayln "you can do it!")
+;d          (displayln (list-ref sorted-optimal i))
+          (define lt (si (si-cidx lastone) (+ i 1)))
+;d          (displayln "make splitindex")
+          (split-section (append (reverse (cdr (reverse curr))) (list lt)) lt (+ i 1))]
+        [else 
+;d          (displayln "there's nothing to it!")
+          (define lt (si (list-ref sorted-optimal i) (+ i 1)))
+          (split-section (append curr (list lt)) lt (+ i 1))
+          ]))))
+
 (define it 0)
 
 (define (infer-splitpoints alts ctx)
@@ -38,10 +104,38 @@
         (exprs-to-branch-on alts ctx)
         (program-variables (alt-program (first alts)))))
   (define err-lsts (batch-errors (map alt-program alts) (*pcontext*) ctx))
+  ; (displayln "err-lsts: ")
+  ; (displayln err-lsts)
+  (display "number of alts: ")
+  (displayln (length alts))
+  (displayln "cost-lst: ")
+  (define cost-lst 
+    (for/list ([alt alts]) 
+      (alt-cost alt (repr-of (program-body (alt-program alt)) ctx))))
+  (displayln cost-lst)
   (display "branch-exprs: ")
   (displayln branch-exprs)
   (display "branch-exprs length: ")
   (displayln (length branch-exprs))
+  (define pts (for/list ([(pt ex) (in-pcontext (*pcontext*))]) pt))
+
+  (define optimal (per-point-optimal err-lsts))
+  (displayln "optimal: ")
+  (displayln optimal)
+  (define opt-options (for/list ([bexpr branch-exprs]) (sort-optimal optimal pts alts err-lsts bexpr ctx)))
+  (displayln opt-options)
+  (define opt-square (argmin (compose length option-split-indices) opt-options))
+  (displayln "naive best: ")
+  (displayln opt-square)
+
+  (define paretos (per-point-pareto pts cost-lst err-lsts))
+  (if (not (check-paretos paretos)) (displayln "invalid paretos") (displayln "paretos good"))
+  ;; (displayln paretos)
+  (displayln (length paretos))
+
+  (define pareto-results (for/list ([bexpr branch-exprs]) (pareto-option-on-expr alts pts err-lsts cost-lst paretos bexpr ctx)))
+  ;; (displayln pareto-results)
+
   (define options
     ;; We can only combine alts for which the branch expression is
     ;; critical, to enable binary search.
@@ -97,6 +191,15 @@
                          (critical-subexpression? prog-body expr)))
     expr))
 
+(define (pareto-option-on-expr alts pts err-lsts cost-lst paretos expr ctx)
+  (define repr (repr-of expr ctx))
+  (define vars (program-variables (alt-program (first alts))))
+  (define fn (eval-prog `(λ ,vars ,expr) 'fl ctx))
+  (define sorted-paretos 
+    (sort paretos 
+      (lambda (x y) (< (apply fn (car x)) (apply fn (car y))))))
+  sorted-paretos)
+
 (define (option-on-expr alts err-lsts expr ctx)
   (displayln "call option-on-expr #")
   (define repr (repr-of expr ctx))
@@ -108,9 +211,8 @@
 
   (define vars (program-variables (alt-program (first alts))))
   (define pts (for/list ([(pt ex) (in-pcontext (*pcontext*))]) pt))
-  (displayln pts)
+  ;(displayln pts)
   (define fn (eval-prog `(λ ,vars ,expr) 'fl ctx))
-  (define splitvals (for/list ([pt pts]) (apply fn pt)))
   (define big-table ; val and errors for each alt, per point
     (for/list ([(pt ex) (in-pcontext (*pcontext*))] [err-lst err-lsts])
       (list* pt (apply fn pt) err-lst)))

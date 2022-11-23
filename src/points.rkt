@@ -44,9 +44,20 @@
 ;; all points in a pcontext.
 
 (define (point-error out exact repr)
+  ;;; (cond 
+  ;;;   [((representation-special-value? repr) out)
+  ;;;     (displayln "special repr")
+  ;;;     (let ([res (+ 1 (expt 2 (representation-total-bits repr)))])
+  ;;;       (displayln res)
+  ;;;       res)]
+  ;;;   [else 
+  ;;;     (displayln "not special repr")
+  ;;;     (let ([res (ulp-difference out exact repr)])
+  ;;;       (displayln res)
+  ;;;       res)]))
   (if ((representation-special-value? repr) out)
-      (+ 1 (expt 2 (representation-total-bits repr)))
-      (ulp-difference out exact repr)))
+    (+ 1 (expt 2 (representation-total-bits repr)))
+    (ulp-difference out exact repr)))
 
 (define (average . s)
   (/ (apply + s) (length s)))

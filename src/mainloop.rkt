@@ -380,6 +380,7 @@
   (extract!))
 
 (define (pareto-regimes sorted ctx)
+  (displayln "pareto-regimes")
   (let loop ([alts sorted] [idx 0])
     (cond
      [(null? alts) '()]

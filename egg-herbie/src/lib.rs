@@ -2,7 +2,6 @@ pub mod math;
 pub mod rules;
 
 use egg::{Extractor, Id, Iteration, Language, StopReason, Symbol};
-use indexmap::IndexMap;
 use math::*;
 
 use std::cmp::min;
@@ -344,8 +343,10 @@ pub unsafe extern "C" fn egraph_get_variants(
         let head_node = &orig_recexpr.as_ref()[orig_recexpr.as_ref().len() - 1];
 
         // extractor
-        let extractor = Extractor::new(&runner.egraph, AltCost::new(&runner.egraph));
-        let mut cache: IndexMap<Id, RecExpr> = Default::default();
+        let extractor = Extractor::new(
+            &runner.egraph,
+            VariantCost::new(&runner.egraph, &runner.iterations[0].data),
+        );
 
         // extract variants
         let mut exprs = vec![];
@@ -353,15 +354,10 @@ pub unsafe extern "C" fn egraph_get_variants(
             // assuming same ops in an eclass cannot
             // have different precisions
             if !n.matches(head_node) {
-                // extract if not in cache
-                n.for_each(|id| {
-                    if cache.get(&id).is_none() {
-                        let (_, best) = extractor.find_best(id);
-                        cache.insert(id, best);
-                    }
-                });
-
-                exprs.push(n.join_recexprs(|id| cache.get(&id).unwrap().as_ref()));
+                exprs.push(n.join_recexprs(|id| {
+                    let (_, best) = extractor.find_best(id);
+                    best
+                }));
             }
         }
 

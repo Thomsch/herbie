@@ -14,13 +14,35 @@ pub type Rewrite = egg::Rewrite<Math, ConstantFold>;
 pub type Runner = egg::Runner<Math, ConstantFold, IterData>;
 pub type Iteration = egg::Iteration<IterData>;
 
-pub struct IterData {
-    pub extracted: Vec<(Id, Extracted)>,
-}
-
 pub struct Extracted {
     pub best: RecExpr,
     pub cost: usize,
+}
+pub struct IterData {
+    pub extracted: Vec<(Id, Extracted)>,
+    pub egraph0: Option<EGraph>,
+}
+
+impl IterationData<Math, ConstantFold> for IterData {
+    fn make(runner: &Runner) -> Self {
+        let extractor = Extractor::new(&runner.egraph, AltCost::new(&runner.egraph));
+        let extracted = runner
+            .roots
+            .iter()
+            .map(|&root| {
+                let (cost, best) = extractor.find_best(root);
+                let ext = Extracted { cost, best };
+                (root, ext)
+            })
+            .collect();
+        let egraph0 = if runner.iterations.is_empty() {
+            Some(runner.egraph.clone())
+        } else {
+            None
+        };
+
+        Self { extracted, egraph0 }
+    }
 }
 
 // cost function similar to AstSize except it will
@@ -54,19 +76,56 @@ impl<'a> CostFunction<Math> for AltCost<'a> {
     }
 }
 
-impl IterationData<Math, ConstantFold> for IterData {
-    fn make(runner: &Runner) -> Self {
-        let extractor = Extractor::new(&runner.egraph, AltCost::new(&runner.egraph));
-        let extracted = runner
-            .roots
-            .iter()
-            .map(|&root| {
-                let (cost, best) = extractor.find_best(root);
-                let ext = Extracted { cost, best };
-                (root, ext)
-            })
-            .collect();
-        Self { extracted }
+// cost function similar to `AltCost`
+// except eclasses from the zeroth iteration
+// are preferred
+pub struct VariantCost<'a> {
+    pub egraph: &'a EGraph,
+    pub iter0: &'a IterData,
+}
+
+impl<'a> VariantCost<'a> {
+    pub fn new(egraph: &'a EGraph, iter0: &'a IterData) -> Self {
+        Self { egraph, iter0 }
+    }
+}
+
+impl<'a> CostFunction<Math> for VariantCost<'a> {
+    type Cost = usize;
+
+    fn cost<C>(&mut self, enode: &Math, mut costs: C) -> Self::Cost
+    where
+        C: FnMut(Id) -> Self::Cost,
+    {
+        if let Math::Pow([_, _, i]) = enode {
+            if let Some((n, _reason)) = &self.egraph[*i].data {
+                if !n.denom().is_one() && n.denom().is_odd() {
+                    return usize::MAX;
+                }
+            }
+        }
+
+        let is_orig_id = |id: &Id| {
+            self.iter0
+                .egraph0
+                .as_ref()
+                .unwrap()
+                .classes()
+                .find(|c| c.id == *id)
+                .is_some()
+        };
+
+        let orig_lookup = |node: Math| self.iter0.egraph0.as_ref().unwrap().lookup(node.clone());
+
+        let id = self.egraph.lookup(enode.clone()).unwrap();
+        if is_orig_id(&id)
+            && enode.children().iter().all(|i| is_orig_id(i))
+            && orig_lookup(enode.clone()).is_some()
+        {
+            enode.fold(1, |sum, id| usize::saturating_add(sum, costs(id)))
+        } else {
+            enode.fold(100, |sum, id| usize::saturating_add(sum, costs(id)))
+        }
     }
 }
 
@@ -100,6 +159,16 @@ pub struct ConstantFold {
     pub unsound: AtomicBool,
     pub constant_fold: bool,
     pub prune: bool,
+}
+
+impl Clone for ConstantFold {
+    fn clone(&self) -> Self {
+        Self {
+            constant_fold: self.constant_fold,
+            prune: self.prune,
+            unsound: AtomicBool::new(self.unsound.load(Ordering::SeqCst)),
+        }
+    }
 }
 
 impl Default for ConstantFold {

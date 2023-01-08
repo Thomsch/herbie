@@ -6,6 +6,7 @@ use math::*;
 
 use std::cmp::min;
 use std::ffi::{CStr, CString};
+use std::ops::Index;
 use std::os::raw::c_char;
 use std::time::Duration;
 use std::{slice, sync::atomic::Ordering};
@@ -323,29 +324,33 @@ pub unsafe extern "C" fn egraph_get_proof(
     })
 }
 
-fn replace_orig_exprs(
-    expr: RecExpr,
+fn replace_with_orig_expr_node(
+    expr: &RecExpr,
     ids: &Vec<Id>,
     extractor: &Extractor<AltCost, Math, ConstantFold>,
-    egraph0: &EGraph
+    egraph0: &EGraph,
+    index: usize,
 ) -> RecExpr {
-    let n = expr.as_ref().last().unwrap();
-    let id = ids.last().unwrap();
+    let n = expr.index(Id::from(index));
+    let id = ids[index];
 
-    if egraph0.classes().find(|c| c.id == *id).is_some() {
-        let (_, best) = extractor.find_best(*id);
+    if n.is_leaf() {
+        RecExpr::from(vec![n.clone()])
+    } else if egraph0.classes().find(|c| c.id == id).is_some() {
+        let (_, best) = extractor.find_best(id);
         best
-    } else if expr.as_ref().len() == 1 {
-        expr
     } else {
-        n.join_recexprs(|id| {
-            let mut sexpr = RecExpr::default();
-            for i in 0..(usize::from(id) + 1) {
-                sexpr.add(expr.as_ref()[i].clone());
-            }
-            replace_orig_exprs(sexpr, ids, extractor, egraph0)
-        })
+        n.join_recexprs(|id| replace_with_orig_expr_node(expr, ids, extractor, egraph0, usize::from(id)))
     }
+}
+
+fn replace_with_orig_expr(
+    expr: &RecExpr,
+    ids: &Vec<Id>,
+    extractor: &Extractor<AltCost, Math, ConstantFold>,
+    egraph0: &EGraph,
+) -> RecExpr {
+    replace_with_orig_expr_node(expr, ids, extractor, egraph0, expr.as_ref().len() - 1)
 }
 
 #[no_mangle]
@@ -384,8 +389,8 @@ pub unsafe extern "C" fn egraph_get_variants(
                     let variant = n.join_recexprs(|id| {
                         let (_, best) = extractor.find_best(id);
                         let ids = runner.egraph.lookup_expr_ids(&best).unwrap();
-                        replace_orig_exprs(
-                            best,
+                        replace_with_orig_expr(
+                            &best,
                             &ids,
                             &extractor0,
                             runner.iterations[0].data.orig_egraph.as_ref().unwrap(),

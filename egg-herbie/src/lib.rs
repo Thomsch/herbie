@@ -323,6 +323,31 @@ pub unsafe extern "C" fn egraph_get_proof(
     })
 }
 
+fn replace_orig_exprs(
+    expr: RecExpr,
+    ids: &Vec<Id>,
+    extractor: &Extractor<AltCost, Math, ConstantFold>,
+    egraph0: &EGraph
+) -> RecExpr {
+    let n = expr.as_ref().last().unwrap();
+    let id = ids.last().unwrap();
+
+    if egraph0.classes().find(|c| c.id == *id).is_some() {
+        let (_, best) = extractor.find_best(*id);
+        best
+    } else if expr.as_ref().len() == 1 {
+        expr
+    } else {
+        n.join_recexprs(|id| {
+            let mut sexpr = RecExpr::default();
+            for i in 0..(usize::from(id) + 1) {
+                sexpr.add(expr.as_ref()[i].clone());
+            }
+            replace_orig_exprs(sexpr, ids, extractor, egraph0)
+        })
+    }
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn egraph_get_variants(
     ptr: *mut Context,
@@ -343,21 +368,44 @@ pub unsafe extern "C" fn egraph_get_variants(
         let head_node = &orig_recexpr.as_ref()[orig_recexpr.as_ref().len() - 1];
 
         // extractor
-        let extractor = Extractor::new(
-            &runner.egraph,
-            VariantCost::new(&runner.egraph, &runner.iterations[0].data),
-        );
+        let extractor = Extractor::new(&runner.egraph, AltCost::new(&runner.egraph));
 
         // extract variants
         let mut exprs = vec![];
-        for n in &runner.egraph[id].nodes {
-            // assuming same ops in an eclass cannot
-            // have different precisions
-            if !n.matches(head_node) {
-                exprs.push(n.join_recexprs(|id| {
-                    let (_, best) = extractor.find_best(id);
-                    best
-                }));
+        if runner.iterations.len() > 1 {
+            // original egraph
+            let egraph0 = runner.iterations[0].data.orig_egraph.as_ref().unwrap();
+            let extractor0 = Extractor::new(egraph0, AltCost::new(egraph0));
+
+            for n in &runner.egraph[id].nodes {
+                // assuming same ops in an eclass cannot
+                // have different precisions
+                if !n.matches(head_node) {
+                    let variant = n.join_recexprs(|id| {
+                        let (_, best) = extractor.find_best(id);
+                        let ids = runner.egraph.lookup_expr_ids(&best).unwrap();
+                        replace_orig_exprs(
+                            best,
+                            &ids,
+                            &extractor0,
+                            runner.iterations[0].data.orig_egraph.as_ref().unwrap(),
+                        )
+                    });
+
+                    exprs.push(variant);
+                }
+            }
+        } else {
+            for n in &runner.egraph[id].nodes {
+                // assuming same ops in an eclass cannot
+                // have different precisions
+                if !n.matches(head_node) {
+                    let variant = n.join_recexprs(|id| {
+                        let (_, best) = extractor.find_best(id);
+                        best
+                    });
+                    exprs.push(variant);
+                }
             }
         }
 

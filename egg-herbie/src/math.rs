@@ -20,7 +20,7 @@ pub struct Extracted {
 }
 pub struct IterData {
     pub extracted: Vec<(Id, Extracted)>,
-    pub egraph0: Option<EGraph>,
+    pub orig_egraph: Option<EGraph>,
 }
 
 impl IterationData<Math, ConstantFold> for IterData {
@@ -35,13 +35,16 @@ impl IterationData<Math, ConstantFold> for IterData {
                 (root, ext)
             })
             .collect();
-        let egraph0 = if runner.iterations.is_empty() {
+        let orig_egraph = if runner.iterations.is_empty() {
             Some(runner.egraph.clone())
         } else {
             None
         };
 
-        Self { extracted, egraph0 }
+        Self {
+            extracted,
+            orig_egraph,
+        }
     }
 }
 
@@ -73,59 +76,6 @@ impl<'a> CostFunction<Math> for AltCost<'a> {
         }
 
         enode.fold(1, |sum, id| usize::saturating_add(sum, costs(id)))
-    }
-}
-
-// cost function similar to `AltCost`
-// except eclasses from the zeroth iteration
-// are preferred
-pub struct VariantCost<'a> {
-    pub egraph: &'a EGraph,
-    pub iter0: &'a IterData,
-}
-
-impl<'a> VariantCost<'a> {
-    pub fn new(egraph: &'a EGraph, iter0: &'a IterData) -> Self {
-        Self { egraph, iter0 }
-    }
-}
-
-impl<'a> CostFunction<Math> for VariantCost<'a> {
-    type Cost = usize;
-
-    fn cost<C>(&mut self, enode: &Math, mut costs: C) -> Self::Cost
-    where
-        C: FnMut(Id) -> Self::Cost,
-    {
-        if let Math::Pow([_, _, i]) = enode {
-            if let Some((n, _reason)) = &self.egraph[*i].data {
-                if !n.denom().is_one() && n.denom().is_odd() {
-                    return usize::MAX;
-                }
-            }
-        }
-
-        let is_orig_id = |id: &Id| {
-            self.iter0
-                .egraph0
-                .as_ref()
-                .unwrap()
-                .classes()
-                .find(|c| c.id == *id)
-                .is_some()
-        };
-
-        let orig_lookup = |node: Math| self.iter0.egraph0.as_ref().unwrap().lookup(node.clone());
-
-        let id = self.egraph.lookup(enode.clone()).unwrap();
-        if is_orig_id(&id)
-            && enode.children().iter().all(|i| is_orig_id(i))
-            && orig_lookup(enode.clone()).is_some()
-        {
-            enode.fold(1, |sum, id| usize::saturating_add(sum, costs(id)))
-        } else {
-            enode.fold(100, |sum, id| usize::saturating_add(sum, costs(id)))
-        }
     }
 }
 

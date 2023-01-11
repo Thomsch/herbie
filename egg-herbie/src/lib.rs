@@ -1,7 +1,7 @@
 pub mod math;
 pub mod rules;
 
-use egg::{AstSize, Extractor, Id, Iteration, Language, StopReason, Symbol};
+use egg::{Extractor, Id, Iteration, Language, StopReason, Symbol};
 use math::*;
 
 use std::cmp::min;
@@ -337,7 +337,7 @@ pub unsafe extern "C" fn egraph_get_proof(
     })
 }
 
-fn replace_with_orig_expr_node(
+fn replace_with_originals(
     expr: &RecExpr,
     ids: &Vec<Id>,
     orig_ids: &IndexSet<Id>,
@@ -348,24 +348,17 @@ fn replace_with_orig_expr_node(
     let id = ids[index];
 
     if n.is_leaf() {
-        RecExpr::from(vec![n.clone()])
+        let mut expr = RecExpr::default();
+        expr.add(n.clone());
+        expr
     } else if orig_ids.contains(&id) {
         let (_, best) = extractor.find_best(id);
         best
     } else {
         n.join_recexprs(|id| {
-            replace_with_orig_expr_node(expr, ids, orig_ids, extractor, usize::from(id))
+            replace_with_originals(expr, ids, orig_ids, extractor, usize::from(id))
         })
     }
-}
-
-fn replace_with_orig_expr(
-    expr: &RecExpr,
-    ids: &Vec<Id>,
-    orig_ids: &IndexSet<Id>,
-    extractor: &Extractor<AltCost, Math, ConstantFold>,
-) -> RecExpr {
-    replace_with_orig_expr_node(expr, ids, orig_ids, extractor, expr.as_ref().len() - 1)
 }
 
 // Descends through the egraph starting at `node_id`
@@ -433,10 +426,11 @@ pub unsafe extern "C" fn egraph_get_variants(
                     let variant = n.join_recexprs(|id| {
                         let (_, best) = extractor.find_best(id);
                         let ids = runner.egraph.lookup_expr_ids(&best).unwrap();
+                        let idx = best.as_ref().len() - 1;
                         // ... except we prefer the original representation
-                        // of an e-class if we extract it, i.e.,
-                        // minimal munging of subexpressions
-                        replace_with_orig_expr(&best, &ids, &orig_ids, &extractor0)
+                        // of an e-class if we extract it, i.e., minimal munging
+                        // of subexpressions
+                        replace_with_originals(&best, &ids, &orig_ids, &extractor0, idx)
                     });
 
                     exprs.push(variant);

@@ -1,15 +1,18 @@
 pub mod math;
 pub mod rules;
 
-use egg::{Extractor, Id, Iteration, Language, StopReason, Symbol};
+use egg::{AstSize, Extractor, Id, Iteration, Language, StopReason, Symbol};
 use math::*;
 
 use std::cmp::min;
+use std::collections::VecDeque;
 use std::ffi::{CStr, CString};
 use std::ops::Index;
 use std::os::raw::c_char;
 use std::time::Duration;
 use std::{slice, sync::atomic::Ordering};
+
+use indexmap::IndexSet;
 
 unsafe fn cstring_to_recexpr(c_string: *const c_char) -> Option<RecExpr> {
     match CStr::from_ptr(c_string).to_str() {
@@ -28,15 +31,19 @@ pub struct Context {
     iteration: usize,
     runner: Option<Runner>,
     rules: Vec<Rewrite>,
+    egraph0: EGraph,
 }
 
 // I had to add $(rustc --print sysroot)/lib to LD_LIBRARY_PATH to get linking to work after installing rust with rustup
 #[no_mangle]
 pub unsafe extern "C" fn egraph_create() -> *mut Context {
+    let runner = Runner::new(Default::default()).with_explanations_enabled();
+    let egraph0 = runner.egraph.clone();
     Box::into_raw(Box::new(Context {
         iteration: 0,
-        runner: Some(Runner::new(Default::default()).with_explanations_enabled()),
+        runner: Some(runner),
         rules: vec![],
+        egraph0: egraph0,
     }))
 }
 
@@ -161,6 +168,7 @@ pub unsafe extern "C" fn egraph_run_with_iter_limit(
             .unwrap_or_else(|| panic!("Runner has been invalidated"));
 
         if runner.stop_reason.is_none() {
+            // prepare rules
             let length: usize = rules_array_length as usize;
             let ffi_rules: &[*mut FFIRule] = slice::from_raw_parts(rules_array_ptr, length);
             let mut ffi_tuples: Vec<(&str, &str, &str)> = vec![];
@@ -177,6 +185,11 @@ pub unsafe extern "C" fn egraph_run_with_iter_limit(
             let rules: Vec<Rewrite> = rules::mk_rules(&ffi_tuples);
             ctx.rules = rules;
 
+            // stash original egraph (`egraph_get_variants` has
+            // requires a copy of the pristine egraph)
+            ctx.egraph0 = runner.egraph.clone();
+
+            // run
             runner.egraph.analysis.constant_fold = is_constant_folding_enabled;
             runner = runner
                 .with_node_limit(node_limit as usize)
@@ -315,7 +328,7 @@ pub unsafe extern "C" fn egraph_get_proof(
             .take()
             .unwrap_or_else(|| panic!("Runner has been invalidated"));
 
-        let mut proof = runner.explain_equivalence(&expr_rec, &goal_rec);
+        let proof = runner.explain_equivalence(&expr_rec, &goal_rec);
         ctx.runner = Some(runner);
         let string = CString::new(proof.get_string_with_let().replace("\n", "")).unwrap();
         let string_pointer = string.as_ptr();
@@ -327,8 +340,8 @@ pub unsafe extern "C" fn egraph_get_proof(
 fn replace_with_orig_expr_node(
     expr: &RecExpr,
     ids: &Vec<Id>,
+    orig_ids: &IndexSet<Id>,
     extractor: &Extractor<AltCost, Math, ConstantFold>,
-    egraph0: &EGraph,
     index: usize,
 ) -> RecExpr {
     let n = expr.index(Id::from(index));
@@ -336,21 +349,49 @@ fn replace_with_orig_expr_node(
 
     if n.is_leaf() {
         RecExpr::from(vec![n.clone()])
-    } else if egraph0.classes().find(|c| c.id == id).is_some() {
+    } else if orig_ids.contains(&id) {
         let (_, best) = extractor.find_best(id);
         best
     } else {
-        n.join_recexprs(|id| replace_with_orig_expr_node(expr, ids, extractor, egraph0, usize::from(id)))
+        n.join_recexprs(|id| {
+            replace_with_orig_expr_node(expr, ids, orig_ids, extractor, usize::from(id))
+        })
     }
 }
 
 fn replace_with_orig_expr(
     expr: &RecExpr,
     ids: &Vec<Id>,
+    orig_ids: &IndexSet<Id>,
     extractor: &Extractor<AltCost, Math, ConstantFold>,
-    egraph0: &EGraph,
 ) -> RecExpr {
-    replace_with_orig_expr_node(expr, ids, extractor, egraph0, expr.as_ref().len() - 1)
+    replace_with_orig_expr_node(expr, ids, orig_ids, extractor, expr.as_ref().len() - 1)
+}
+
+// Descends through the egraph starting at `node_id`
+// and returns a set of the unique ids
+// ASSUMES each eclass has only one enode
+fn compute_original_ids(egraph0: &EGraph, node_id: Id) -> IndexSet<Id> {
+    let mut ids = IndexSet::<Id>::new();
+    let mut to_process = VecDeque::<Id>::new();
+
+    to_process.push_back(node_id);
+    while !to_process.is_empty() {
+        let head = to_process.pop_front().unwrap();
+        if !ids.contains(&head) {
+            ids.insert(head);
+            match &egraph0[head].nodes[..] {
+                [n] => {
+                    for c in n.children() {
+                        to_process.push_back(*c);
+                    }
+                }
+                _ => panic!("multiple enodes found in an eclass when one was expected"),
+            }
+        }
+    }
+
+    ids
 }
 
 #[no_mangle]
@@ -379,8 +420,9 @@ pub unsafe extern "C" fn egraph_get_variants(
         let mut exprs = vec![];
         if runner.iterations.len() > 1 {
             // original egraph
-            let egraph0 = runner.iterations[0].data.orig_egraph.as_ref().unwrap();
+            let egraph0 = &ctx.egraph0;
             let extractor0 = Extractor::new(egraph0, AltCost::new(egraph0));
+            let orig_ids = compute_original_ids(egraph0, id);
 
             for n in &runner.egraph[id].nodes {
                 // assuming same ops in an eclass cannot
@@ -389,12 +431,7 @@ pub unsafe extern "C" fn egraph_get_variants(
                     let variant = n.join_recexprs(|id| {
                         let (_, best) = extractor.find_best(id);
                         let ids = runner.egraph.lookup_expr_ids(&best).unwrap();
-                        replace_with_orig_expr(
-                            &best,
-                            &ids,
-                            &extractor0,
-                            runner.iterations[0].data.orig_egraph.as_ref().unwrap(),
-                        )
+                        replace_with_orig_expr(&best, &ids, &orig_ids, &extractor0)
                     });
 
                     exprs.push(variant);

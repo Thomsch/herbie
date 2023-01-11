@@ -20,7 +20,6 @@ pub struct Extracted {
 }
 pub struct IterData {
     pub extracted: Vec<(Id, Extracted)>,
-    pub orig_egraph: Option<EGraph>,
 }
 
 impl IterationData<Math, ConstantFold> for IterData {
@@ -35,16 +34,8 @@ impl IterationData<Math, ConstantFold> for IterData {
                 (root, ext)
             })
             .collect();
-        let orig_egraph = if runner.iterations.is_empty() {
-            Some(runner.egraph.clone())
-        } else {
-            None
-        };
 
-        Self {
-            extracted,
-            orig_egraph,
-        }
+        Self { extracted }
     }
 }
 

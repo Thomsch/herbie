@@ -428,9 +428,14 @@ pub unsafe extern "C" fn egraph_get_variants(
                 // assuming same ops in an eclass cannot
                 // have different precisions
                 if !n.matches(head_node) {
+                    // for each enode, extract the
+                    // simplest representation for each child e-class...
                     let variant = n.join_recexprs(|id| {
                         let (_, best) = extractor.find_best(id);
                         let ids = runner.egraph.lookup_expr_ids(&best).unwrap();
+                        // ... except we prefer the original representation
+                        // of an e-class if we extract it, i.e.,
+                        // minimal munging of subexpressions
                         replace_with_orig_expr(&best, &ids, &orig_ids, &extractor0)
                     });
 

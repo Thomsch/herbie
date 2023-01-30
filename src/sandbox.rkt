@@ -1,12 +1,12 @@
 #lang racket
 (require profile math/bigfloat racket/engine json)
-(require "syntax/read.rkt" "syntax/sugar.rkt" "syntax/types.rkt"
+(require "syntax/read.rkt" "syntax/sugar.rkt" "syntax/types.rkt" "syntax/syntax.rkt"
          "alternative.rkt" "common.rkt" "conversions.rkt" "cost.rkt"
          "datafile.rkt" "errors.rkt" "float.rkt" "web/common.rkt"
          "mainloop.rkt" "preprocess.rkt" "points.rkt" "profile.rkt"
          "programs.rkt" "timeline.rkt" (submod "timeline.rkt" debug))
 
-(provide get-alternatives get-errors get-sample get-test-result *reeval-pts* *timeout*
+(provide get-alternatives get-errors get-sample get-test-result get-local-errors *reeval-pts* *timeout*
          (struct-out test-result) (struct-out test-success)
          (struct-out test-failure) (struct-out test-timeout)
          get-table-data unparse-result)
@@ -120,6 +120,89 @@
                   #:specification (test-specification test)
                   #:preprocess (test-preprocess test)))
   (for/list ([alt alts]) (define out (open-output-string)) (display (program->fpcore (alt-program alt)) out) (get-output-string out)))
+
+(define (get-local-errors test pts+exs #:seed [seed #f] #:profile [profile? #f])
+  (define output-repr (test-output-repr test))
+  (define tcontext (test-context test))
+  (*needed-reprs* (list output-repr (get-representation 'bool)))
+  (generate-prec-rewrites (test-conversions test))
+
+  ;; Set up context without resampling points
+  (define (setup-context-no-resample! specification precondition repr)
+    (define vars (program-variables specification))
+    (*context* (context vars repr (map (const repr) vars)))
+    (when (empty? (*needed-reprs*)) ; if empty, probably debugging
+      (*needed-reprs* (list repr (get-representation 'bool)))))
+
+  (setup-context-no-resample!
+    (or (test-specification test) (test-program test)) (test-precondition test)
+    output-repr)
+  (when seed (set-seed! seed))
+  (random) ;; Child process uses deterministic but different seed from evaluator
+
+  (define (all-subexpressions expr)
+    (remove-duplicates
+    (reap [sow]
+          (let loop ([expr expr])
+            (sow expr)
+            (match expr
+              [(? number?) (void)]
+              [(? variable?) (void)]
+              [(list op args ...)
+                (for-each loop args)])))))
+
+  (define (localize-error prog ctx pctx)
+    (define expr (program-body prog))
+    (define subexprs (all-subexpressions expr))
+    (define subprogs
+      (for/list ([expr (in-list subexprs)])
+        `(λ ,(program-variables prog) ,expr)))
+    (define exact-fn (batch-eval-progs subprogs 'bf ctx))
+    (define errs (make-hash (map (curryr cons '()) subexprs)))
+    (for ([(pt ex) (in-pcontext pctx)])
+      (define bf-values (apply exact-fn pt))
+      (define bfhash (make-hash (map cons subexprs bf-values)))
+      (for ([expr (in-list subexprs)])
+        (define err
+          (match expr
+            [(? number?) 1]
+            [(? variable?) 1]
+            [`(if ,c ,ift ,iff) 1]
+            [(list f args ...)
+            (define repr (operator-info f 'otype))
+            (define <-bf (representation-bf->repr repr))
+            (define argapprox
+              (for/list ([arg (in-list args)] [repr (in-list (operator-info f 'itype))])
+                ((representation-bf->repr repr) (hash-ref bfhash arg))))
+            (ulp-difference (<-bf (hash-ref bfhash expr))
+                            (apply (operator-info f 'fl) argapprox) repr)]))
+        (hash-update! errs expr (curry cons err))))
+
+    (sort
+    (reap [sow]
+          (for ([(expr err) (in-hash errs)])
+            (unless (andmap (curry = 1) err)
+              (sow (cons err expr)))))
+    > #:key (compose errors-score car)))
+
+  ; I feel like there's a simpler way to split a list of cons into two lists...
+  (define pts (for/list ([ptex pts+exs]) (map real->double-flonum (car ptex))))
+  (define exs (for/list ([ptex pts+exs]) (real->double-flonum (car (cdr ptex)))))
+
+  (define joint-pcontext (mk-pcontext pts exs))
+
+  (displayln (localize-error (test-program test) (*context*) joint-pcontext))
+
+  (define processed-pcontext
+    (preprocess-pcontext joint-pcontext (*herbie-preprocess*) tcontext))
+  (define-values (newpoints newexacts) (get-p&es processed-pcontext))
+
+  (define errs
+    (errors (test-program test) processed-pcontext tcontext))
+
+  (when seed (set-seed! seed))
+  (define-values (points exacts) (get-p&es joint-pcontext))
+  (for/list ([point points] [err errs]) (list point (format-bits (ulps->bits err)))))
 
 (define (run-herbie test)
   (define seed (get-seed))

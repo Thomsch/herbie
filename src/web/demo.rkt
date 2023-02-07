@@ -360,9 +360,10 @@
     (lambda (post-data)
       (define formula (read-syntax 'web (open-input-string (hash-ref post-data 'formula))))
       (define pts+exs (hash-ref post-data 'sample))
+      (define mode (hash-ref post-data 'mode))
       (eprintf "Job started on ~a..." formula)
 
-      (define result (get-errors (parse-test formula) pts+exs))
+      (define result (get-errors (parse-test formula) pts+exs #:error-mode mode))
 
       (eprintf " complete\n")
       (hasheq 'points result))))

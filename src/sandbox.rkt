@@ -56,11 +56,21 @@
   (define-values (points exacts) (get-p&es test-pcontext))
   (for/list ([point points] [exact exacts]) (list point exact)))
 
-(define (get-errors test pts+exs #:seed [seed #f] #:profile [profile? #f])
+(define (get-errors test
+                    pts+exs
+                    #:seed [seed #f]
+                    #:profile [profile? #f]
+                    #:error-mode [error-mode 'bits])
   (define output-repr (test-output-repr test))
   (define tcontext (test-context test))
   (*needed-reprs* (list output-repr (get-representation 'bool)))
   (generate-prec-rewrites (test-conversions test))
+
+  (define error-fn
+    (match error-mode
+      ['bits point-error]
+      ['absolute point-abs-error]
+      [_ (error 'get-errors "Unknown error mode ~a" error-mode)]))
 
   (when seed (set-seed! seed))
   (random) ;; Child process uses deterministic but different seed from evaluator
@@ -79,7 +89,10 @@
   (define-values (newpoints newexacts) (get-p&es processed-pcontext))
 
   (define errs
-    (errors (test-program test) processed-pcontext tcontext))
+    (errors (test-program test)
+            processed-pcontext
+            tcontext
+            #:error-fn error-fn))
 
   (when seed (set-seed! seed))
   (define-values (points exacts) (get-p&es joint-pcontext))

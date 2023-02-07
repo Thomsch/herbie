@@ -2,8 +2,10 @@
 
 (require "config.rkt" "common.rkt" "float.rkt" "syntax/types.rkt" "programs.rkt")
 
-(provide *pcontext* in-pcontext mk-pcontext for/pcontext pcontext? split-pcontext join-pcontext
-         errors batch-errors errors-score)
+(provide *pcontext* in-pcontext mk-pcontext for/pcontext
+         pcontext? split-pcontext join-pcontext
+         errors batch-errors errors-score
+         point-error point-abs-error)
 
 ;; pcontexts are Herbie's standard data structure for storing
 ;; ground-truth information. They contain 1) a set of sampled input
@@ -48,18 +50,27 @@
       (+ 1 (expt 2 (representation-total-bits repr)))
       (ulp-difference out exact repr)))
 
+(define (point-abs-error out exact repr)
+  (match* ((repr->real out repr) (repr->real exact repr))
+    [(+nan.0 +nan.0)   0]
+    [(+nan.0 _)         +inf.0]
+    [(_ +nan.0)         +inf.0]
+    [(+inf.0 -inf.0)    +inf.0]
+    [(-inf.0 +inf.0)    +inf.0]
+    [(a b)              (abs (- a b))]))
+
 (define (average . s)
   (/ (apply + s) (length s)))
 
 (define (errors-score e)
   (apply (if (flag-set? 'reduce 'avg-error) average max) (map ulps->bits e)))
 
-(define (errors prog pcontext ctx)
-  (map first (batch-errors (list prog) pcontext ctx)))
+(define (errors prog pcontext ctx #:error-fn [error-fn point-error])
+  (map first (batch-errors (list prog) pcontext ctx #:error-fn error-fn)))
 
-(define (batch-errors progs pcontext ctx)
+(define (batch-errors progs pcontext ctx #:error-fn [error-fn point-error])
   (define fn (batch-eval-progs progs 'fl ctx))
   (for/list ([(point exact) (in-pcontext pcontext)])
     (with-handlers ([exn:fail? (λ (e) (eprintf "Error when evaluating ~a on ~a\n" progs point) (raise e))])
       (for/list ([out (in-list (apply fn point))])
-        (point-error out exact (context-repr ctx))))))
+        (error-fn out exact (context-repr ctx))))))

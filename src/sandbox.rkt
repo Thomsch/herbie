@@ -94,9 +94,15 @@
             tcontext
             #:error-fn error-fn))
 
-  (when seed (set-seed! seed))
   (define-values (points exacts) (get-p&es joint-pcontext))
-  (for/list ([point points] [err errs]) (list point (format-bits (ulps->bits err)))))
+
+  (match error-mode
+    ['bits
+     (for/list ([pt points] [err errs])
+       (list pt (format-bits (ulps->bits err))))]
+    ['absolute
+     (for/list ([pt points] [err errs])
+       (list pt (match err [+inf.0 "Inf"] [_ (~a err)])))]))
 
 (define (get-local-error test pts+exs #:seed [seed #f] #:profile [profile? #f])
   (define output-repr (test-output-repr test))

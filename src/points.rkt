@@ -57,7 +57,7 @@
     [(_ +nan.0)         +inf.0]
     [(+inf.0 -inf.0)    +inf.0]
     [(-inf.0 +inf.0)    +inf.0]
-    [(a b)              (abs (- a b))]))
+    [(a b)              (real->repr (abs (- a b)) repr)]))
 
 (define (average . s)
   (/ (apply + s) (length s)))

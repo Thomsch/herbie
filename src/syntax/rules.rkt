@@ -2,7 +2,7 @@
 
 ;; Arithmetic identities for rewriting programs.
 
-(require "../common.rkt" "../errors.rkt" "types.rkt" "syntax.rkt" "sugar.rkt")
+(require "../common.rkt" "types.rkt" "syntax.rkt")
 
 (provide *rules* *simplify-rules* *fp-safe-simplify-rules* (struct-out rule))
 
@@ -153,6 +153,11 @@
     (se-path*/list key xexpr))
 )
 
+(struct ruler-manifest (filename groups type op-table))
+
+(define bool-op-table '(("&" . "and") ("|" . "or") ("^" . "!=")  ("~" . "not")))
+(define rational-op-table '(("~" . "neg")))
+
 ;
 ; Configuration
 ;
@@ -162,11 +167,8 @@
 (define json-path "json")
 
 (define rules-info
-  '(("bool.json" . '((bools) bool))))
-
-; (define rules-files
-;   '(("bool.json" . '(bools))
-;     ("rational.json" . '(arithmetic))))
+  (list (ruler-manifest "bool.json" '(bools) 'bool bool-op-table)
+        (ruler-manifest "rational.json" '(arithmetic) 'real rational-op-table)))
 
 ;
 ; Rule parsing
@@ -180,9 +182,8 @@
       [_ (let ([change (car changes)])
            (loop (string-replace str (car change) (cdr change)) (cdr changes)))])))
    
-(define (parse-ruler-rule lhs rhs)
+(define (parse-ruler-rule lhs rhs table)
   (define (ruler-string-expr->expr str)
-    (define table '(("&" . "and") ("|" . "or") ("^" . "!=") ("~" . "neg")))
     (call-with-input-string (string-replace* str table) read))
 
   (define (parse-expr expr)
@@ -262,13 +263,21 @@
   ; Registers a rule set
   (define (register-ruler-ruleset! name groups var-ctx rules)
     (printf "  Registering ruleset `~a` ...\n" name)
-    (printf "~a ~a ~a\n" name groups var-ctx)
-    (void))
+    (printf "   Groups: ~a\n" groups)
+    (printf "   Vars:   ~a\n" var-ctx)
+    (printf "   Rules:  ~a\n" (length rules))
+    (register-ruleset*!
+      name groups var-ctx
+      (for/list ([rule (in-list rules)] [i (in-naturals 1)])
+        (match-define (list lhs rhs _) rule)
+        (define rule-name (string->symbol (format "~a-~a" name i)))
+        (printf "    ~a: ~a => ~a\n" rule-name lhs rhs)
+        (list rule-name lhs rhs))))
 
   ; Loads a rules file (JSON) and adds the rules to Herbie's database
-  (define (load-ruler-file! name url)
+  (define (load-ruler-file! info url)
     (printf " Loading rules at `~a` ...\n" url)
-    (match-define (list groups type) (dict-ref rules-info name))
+    (match-define (ruler-manifest name groups type op-table) info)
     (define json (get-json url))
 
     (printf "  Parsing rules ...\n")
@@ -276,14 +285,14 @@
     (define rules
       (for/list ([rule (in-list (hash-ref json 'rules))] [counter (in-naturals 1)])
         (match-define (list lhs rhs) (string-split rule " ==> "))
-        (define-values (rule* rule-vars) (parse-ruler-rule lhs rhs))
+        (define-values (rule* rule-vars) (parse-ruler-rule lhs rhs op-table))
         (set-union! vars rule-vars)
         rule*))
 
     (define-values (simplify non-simplify)
       (partition (λ (r) (eq? (third r) 'simplify)) rules))
 
-    (define var-ctx (for/list ([v (in-set vars)]) (cons v type)))
+    (define var-ctx (for/list ([v (in-set vars)]) (cons (string->symbol v) type)))
     (register-ruler-ruleset! name groups var-ctx non-simplify)
     (register-ruler-ruleset! (format "~a-simplify" name) (cons 'simplify groups) var-ctx simplify)
 
@@ -293,9 +302,9 @@
   (define report-path (get-newest-report)) 
   (define json-dir (build-path nightly-root report-path json-path))
   (printf "Looking for rules at `~a` ...\n" json-dir)
-  (for ([(name _) (in-dict rules-info)])
-    (define json-path (build-path json-dir name))
-    (load-ruler-file! name (path->string json-path)))
+  (for ([info (in-list rules-info)])
+    (define json-path (build-path json-dir (ruler-manifest-filename info)))
+    (load-ruler-file! info (path->string json-path)))
 
   (void))
 

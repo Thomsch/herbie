@@ -163,7 +163,7 @@
 ;
 
 (define nightly-root "http://nightly.cs.washington.edu/reports/ruler/")
-(define nightly-branch "nightlies-tests")
+(define nightly-branch "main")
 (define json-path "json")
 
 (define rules-info

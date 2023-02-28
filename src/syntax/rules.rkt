@@ -168,7 +168,10 @@
 
 (define rules-info
   (list (ruler-manifest "bool.json" '(bools) 'bool bool-op-table)
-        (ruler-manifest "rational.json" '(arithmetic) 'real rational-op-table)))
+        (ruler-manifest "rational.json" '(arithmetic) 'real rational-op-table)
+        ; (ruler-manifest "exponential.json" '(arithmetic) 'real rational-op-table)
+        ; (ruler-manifest "trig.json" '(arithmetic) 'real rational-op-table)
+  ))
 
 ;
 ; Rule parsing

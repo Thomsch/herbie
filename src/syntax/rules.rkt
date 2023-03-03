@@ -312,4 +312,7 @@
   (void))
 
 ; Invoked when this module is instantiated
-(load-rules-from-ruler!)
+(define rules-loaded? #f)
+(unless rules-loaded?
+  (load-rules-from-ruler!)
+  (set! rules-loaded? #t))

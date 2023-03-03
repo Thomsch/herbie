@@ -169,8 +169,8 @@
 (define rules-info
   (list (ruler-manifest "bool.json" '(bools) 'bool bool-op-table)
         (ruler-manifest "rational.json" '(arithmetic) 'real rational-op-table)
-        ; (ruler-manifest "exponential.json" '(arithmetic) 'real rational-op-table)
-        ; (ruler-manifest "trig.json" '(arithmetic) 'real rational-op-table)
+        (ruler-manifest "exponential.json" '(arithmetic) 'real rational-op-table)
+        (ruler-manifest "trig.json" '(arithmetic) 'real rational-op-table)
   ))
 
 ;
@@ -255,7 +255,7 @@
       (> (string->number time1) (string->number time2)))
     
     (when (empty? reports-on-branch)
-      (error 'load-rules-from-ruler "No reports matching branch: ~a\n" nightly-branch))
+      (error 'load-rules-from-ruler "No reports matching branch: ~a" nightly-branch))
     (define newest (first (sort reports-on-branch report>?)))
     (match-define (list report-path report-time commit) newest)
     (printf " Newest report has timestamp: ~a\n" report-time)

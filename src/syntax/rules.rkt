@@ -167,7 +167,7 @@
 (define json-path "json")
 
 (define rules-info
-  (list (ruler-manifest "bool.json" '(bools) 'bool bool-op-table)
+  (list ; (ruler-manifest "bool.json" '(bools) 'bool bool-op-table)
         (ruler-manifest "rational.json" '(arithmetic) 'real rational-op-table)
         (ruler-manifest "exponential.json" '(arithmetic) 'real rational-op-table)
         (ruler-manifest "trig.json" '(arithmetic) 'real rational-op-table)
@@ -194,8 +194,6 @@
     (values
       (let loop ([expr (ruler-string-expr->expr expr)])
         (match expr
-          [(list '~ arg)
-           (list 'neg (loop arg))]
           [(list 'sqr arg)
            (define arg* (loop arg))
            (list '* arg* arg*)]
@@ -312,7 +310,4 @@
   (void))
 
 ; Invoked when this module is instantiated
-(define rules-loaded? #f)
-(unless rules-loaded?
-  (load-rules-from-ruler!)
-  (set! rules-loaded? #t))
+(load-rules-from-ruler!)

@@ -165,6 +165,10 @@
 (define nightly-root "http://nightly.cs.washington.edu/reports/ruler/")
 (define nightly-branch "main")
 (define json-path "json")
+(define quiet-mode? #f)
+
+(define (log! msg . args)
+  (unless quiet-mode? (apply printf msg args)))
 
 (define rules-info
   (list ; (ruler-manifest "bool.json" '(bools) 'bool bool-op-table)
@@ -229,12 +233,12 @@
 (define (load-rules-from-ruler!)
   ; Returns the path of the newest Ruler report
   (define (get-newest-report)
-    (printf "Scraping reports at `~a` ...\n" nightly-root)
+    (log! "Scraping reports at `~a` ...\n" nightly-root)
 
     (define nightly-html (get-html nightly-root))
     (define report-paths (filter (λ (p) (not (string=? p "../")))
                                 (get-html-element '(a #:href) nightly-html)))
-    (printf " Found ~a reports\n" (length report-paths))
+    (log! " Found ~a reports\n" (length report-paths))
 
     (define reports-on-branch
       (reap [sow]
@@ -244,8 +248,8 @@
             (when (string=? nightly-branch branch)
               (sow (list path time commit)))]
             [_
-            (printf "Invalid report: ~a" path)]))))
-    (printf " ~a reports associated with branch `~a`\n" (length reports-on-branch) nightly-branch)
+            (log! "Invalid report: ~a" path)]))))
+    (log! " ~a reports associated with branch `~a`\n" (length reports-on-branch) nightly-branch)
 
     (define (report>? r1 r2)
       (match-define (list p1 time1 commit1) r1)
@@ -256,32 +260,32 @@
       (error 'load-rules-from-ruler "No reports matching branch: ~a" nightly-branch))
     (define newest (first (sort reports-on-branch report>?)))
     (match-define (list report-path report-time commit) newest)
-    (printf " Newest report has timestamp: ~a\n" report-time)
-    (printf " Newest report has commit: ~a\n" (substring commit 0 (- (string-length commit) 1)))
+    (log! " Newest report has timestamp: ~a\n" report-time)
+    (log! " Newest report has commit: ~a\n" (substring commit 0 (- (string-length commit) 1)))
 
     report-path)
 
   ; Registers a rule set
   (define (register-ruler-ruleset! name groups var-ctx rules)
-    (printf "  Registering ruleset `~a` ...\n" name)
-    (printf "   Groups: ~a\n" groups)
-    (printf "   Vars:   ~a\n" var-ctx)
-    (printf "   Rules:  ~a\n" (length rules))
+    (log! "  Registering ruleset `~a` ...\n" name)
+    (log! "   Groups: ~a\n" groups)
+    (log! "   Vars:   ~a\n" var-ctx)
+    (log! "   Rules:  ~a\n" (length rules))
     (register-ruleset*!
       name groups var-ctx
       (for/list ([rule (in-list rules)] [i (in-naturals 1)])
         (match-define (list lhs rhs _) rule)
         (define rule-name (string->symbol (format "~a-~a" name i)))
-        (printf "    ~a: ~a => ~a\n" rule-name lhs rhs)
+        (log! "    ~a: ~a => ~a\n" rule-name lhs rhs)
         (list rule-name lhs rhs))))
 
   ; Loads a rules file (JSON) and adds the rules to Herbie's database
   (define (load-ruler-file! info url)
-    (printf " Loading rules at `~a` ...\n" url)
+    (log! " Loading rules at `~a` ...\n" url)
     (match-define (ruler-manifest name groups type op-table) info)
     (define json (get-json url))
 
-    (printf "  Parsing rules ...\n")
+    (log! "  Parsing rules ...\n")
     (define vars (mutable-set))
     (define rules
       (for/list ([rule (in-list (hash-ref json 'rules))] [counter (in-naturals 1)])
@@ -297,12 +301,12 @@
     (register-ruler-ruleset! name groups var-ctx non-simplify)
     (register-ruler-ruleset! (format "~a-simplify" name) (cons 'simplify groups) var-ctx simplify)
 
-    (printf "  Done\n")
+    (log! "  Done\n")
     (void))
 
   (define report-path (get-newest-report)) 
   (define json-dir (build-path nightly-root report-path json-path))
-  (printf "Looking for rules at `~a` ...\n" json-dir)
+  (log! "Looking for rules at `~a` ...\n" json-dir)
   (for ([info (in-list rules-info)])
     (define json-path (build-path json-dir (ruler-manifest-filename info)))
     (load-ruler-file! info (path->string json-path)))

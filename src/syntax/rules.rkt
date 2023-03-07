@@ -155,7 +155,7 @@
 
 (struct ruler-manifest (filename groups type op-table))
 
-(define bool-op-table '(("&" . "and") ("|" . "or") ("^" . "!=")  ("~" . "not")))
+(define bool-op-table '(("&" . "and") ("|" . "or") ("~" . "not")))
 (define rational-op-table '(("~" . "neg")))
 
 ;
@@ -166,12 +166,13 @@
 (define nightly-branch "main")
 (define json-path "json")
 (define quiet-mode? #f)
+(define features '(no-expansive-bool no-xor))
 
 (define (log! msg . args)
   (unless quiet-mode? (apply printf msg args)))
 
 (define rules-info
-  (list ; (ruler-manifest "bool.json" '(bools) 'bool bool-op-table)
+  (list (ruler-manifest "bool.json" '(bools) 'bool bool-op-table)
         (ruler-manifest "rational.json" '(arithmetic) 'real rational-op-table)
         (ruler-manifest "exponential.json" '(arithmetic) 'real rational-op-table)
         (ruler-manifest "trig.json" '(arithmetic) 'real rational-op-table)
@@ -223,6 +224,17 @@
   (define-values (rhs* rhs-vars) (parse-expr rhs))
   (define rule (list lhs* rhs* (and (expr-has-op? lhs*) 'simplify)))
   (values rule (set-union lhs-vars rhs-vars)))
+
+(define (ops-in-expr expr)
+  (define ops (mutable-set))
+  (let loop ([expr expr])
+    (match expr
+      [(list op args ...)
+       (set-add! ops op)
+       (for-each loop args)]
+      [_
+       (void)]))
+  ops)
 
 ;
 ; Rule scraper
@@ -288,14 +300,27 @@
     (log! "  Parsing rules ...\n")
     (define vars (mutable-set))
     (define rules
-      (for/list ([rule (in-list (hash-ref json 'rules))] [counter (in-naturals 1)])
+      (for/fold ([rules '()] #:result (reverse rules))
+                ([rule (in-list (hash-ref json 'rules))]
+                 [counter (in-naturals 1)])
         (match-define (list lhs rhs) (string-split rule " ==> "))
         (define-values (rule* rule-vars) (parse-ruler-rule lhs rhs op-table))
         (set-union! vars rule-vars)
-        rule*))
+        (cond
+          [(and (set-member? features 'no-xor)
+                (or (set-member? (ops-in-expr (first rule*)) '^)
+                    (set-member? (ops-in-expr (second rule*)) '^)))
+           rules]
+          [else
+           (cons rule* rules)])))
 
     (define-values (simplify non-simplify)
-      (partition (λ (r) (eq? (third r) 'simplify)) rules))
+      (let-values ([(simplify non-simplify) (partition (λ (r) (eq? (third r) 'simplify)) rules)])
+        (cond
+          [(and (eq? type 'bool) (set-member? features 'no-expansive-bool))
+           (values simplify (filter (λ (r) (not (symbol? (first r)))) non-simplify))]
+          [else
+           (values simplify non-simplify)])))
 
     (define var-ctx (for/list ([v (in-set vars)]) (cons (string->symbol v) type)))
     (register-ruler-ruleset! name groups var-ctx non-simplify)

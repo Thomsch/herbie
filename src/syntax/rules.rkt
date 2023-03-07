@@ -164,7 +164,7 @@
 
 (define nightly-root "http://nightly.cs.washington.edu/reports/ruler/")
 (define nightly-branch "main")
-(define json-path "json")
+(define json-path "json/derivable_rules")
 (define quiet-mode? #f)
 (define features '(no-expansive-bool no-xor))
 
@@ -172,11 +172,7 @@
   (unless quiet-mode? (apply printf msg args)))
 
 (define rules-info
-  (list (ruler-manifest "bool.json" '(bools) 'bool bool-op-table)
-        (ruler-manifest "rational.json" '(arithmetic) 'real rational-op-table)
-        (ruler-manifest "exponential.json" '(arithmetic) 'real rational-op-table)
-        (ruler-manifest "trig.json" '(arithmetic) 'real rational-op-table)
-  ))
+  (list (ruler-manifest "rational.json" '(arithmetic) 'real rational-op-table)))
 
 ;
 ; Rule parsing
@@ -297,11 +293,16 @@
     (match-define (ruler-manifest name groups type op-table) info)
     (define json (get-json url))
 
+    ; gather rules
+    (define json-rules
+      (append (hash-ref json (string->symbol "forwards derivable"))
+              (hash-ref json (string->symbol "forwards underivable"))))
+
     (log! "  Parsing rules ...\n")
     (define vars (mutable-set))
     (define rules
       (for/fold ([rules '()] #:result (reverse rules))
-                ([rule (in-list (hash-ref json 'rules))]
+                ([rule (in-list json-rules)]
                  [counter (in-naturals 1)])
         (match-define (list lhs rhs) (string-split rule " ==> "))
         (define-values (rule* rule-vars) (parse-ruler-rule lhs rhs op-table))

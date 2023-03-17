@@ -16,7 +16,7 @@ MYDIR="$(cd -P "$(dirname "$src")" && pwd)"
 BRANCHES=branches.config
 SEED=2023073
 THREADS=4
-OUTPUT=reports
+OUTPUT="$MYDIR/reports"
 
 DATE="$(date "+%Y-%m-%d-%T")"
 
@@ -48,11 +48,11 @@ function fetch_branch {
   git checkout $branch
 
   # Temporary patch
-  if [[ "$branch" == "using-ruler-nightlies" ]]; then
-    sed -i 's/main/update-trig/g' src/syntax/rules.rkt
-  elif [[ "$branch" == "using-ruler-baseline" ]]; then
-    sed -i 's/main/update-trig/g' src/syntax/rules.rkt
-  fi
+  # if [[ "$branch" == "using-ruler-nightlies" ]]; then
+  #   sed -i 's/main/update-trig/g' src/syntax/rules.rkt
+  # elif [[ "$branch" == "using-ruler-baseline" ]]; then
+  #   sed -i 's/main/update-trig/g' src/syntax/rules.rkt
+  # fi
 
   # Weird build
   raco make src/syntax/*.rkt \
@@ -78,7 +78,7 @@ function do_branch {
 
   out="$OUTPUT/$folder"
   build="$out/build"
-  report="../$DATE/graphs"
+  report="$OUTPUT/$DATE/$folder/graphs"
 
   pushd $build
 
@@ -94,6 +94,7 @@ function do_branch {
 # Actual start
 
 mkdir -p "$OUTPUT"
+mkdir -p "$OUTPUT/$DATE"
 
 if [ -z "$NO_BUILD" ]; then
   while read branch; do

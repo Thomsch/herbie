@@ -19,7 +19,7 @@
     (λ (o)
       (for ([config (in-list (apply cartesian-product branches flags))])
         (match-define (cons branch options) config)
-        (define options* (string-join (cons always options) " "))
+        (define options* (string-join (filter-not (λ (s) (= (string-length s) 0)) (cons always options)) " "))
         (define fname (fix-name (format "~a-~a" branch options*)))
         (fprintf o "~a ~a ~a\n" branch fname options*)))))
 

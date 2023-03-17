@@ -18,6 +18,8 @@ SEED=2023073
 THREADS=4
 OUTPUT=reports
 
+DATE="$(date "+%Y-%m-%d-%T")"
+
 # for some reason bad things happen if this occurs in parallel
 function fetch_branch {
   branch="$1"
@@ -48,12 +50,14 @@ function fetch_branch {
   # Temporary patch
   if [[ "$branch" == "using-ruler-nightlies" ]]; then
     sed -i 's/main/update-trig/g' src/syntax/rules.rkt
+  elif [[ "$branch" == "using-ruler-baseline" ]]; then
+    sed -i 's/main/update-trig/g' src/syntax/rules.rkt
   fi
 
   # Weird build
-  raco make src/syntax/*.rkt
-  raco make src/web/*.rkt
-  raco make src/*.rkt
+  raco make src/syntax/*.rkt \
+            src/web/*.rkt \
+            src/*.rkt
 
   # Trim benchmark set
   rm bench/demo.fpcore \
@@ -65,21 +69,21 @@ function fetch_branch {
 }
 
 function do_branch {
-  branch="$1"
-  folder="$2"
-
-  shift
-  shift
-  flags="$@"
+  # for some reason, all args are in `$1`
+  # so we need to do some munging
+  IFS=' ' read -ra ARGS <<< "$1"
+  branch="${ARGS[0]}"
+  folder="${ARGS[1]}"
+  flags="${ARGS[@]:2}"
 
   out="$OUTPUT/$folder"
   build="$out/build"
+  report="../$DATE/graphs"
 
   pushd $build
 
   RECURSE=1 bash infra/run.sh \
-    bench \
-    "../graphs" \
+    bench $report \
     --seed $SEED \
     --threads $THREADS \
     $flags
@@ -96,6 +100,8 @@ if [ -z "$NO_BUILD" ]; then
     fetch_branch $branch
   done < $BRANCHES
 fi
+
+echo "Running branches..."
 
 if [ -z "$PARALLEL_SEEDS" ]; then
   while read branch; do
@@ -114,10 +120,9 @@ else
   source $(which env_parallel.bash)
   env_parallel --record-env
 
-  cat $BRANCHES \
-    | env_parallel \
-        --env _ \
-        --jobs "$PARALLEL_SEEDS" \
-        --halt now,fail=1 \
-        do_branch
+  env_parallel \
+    --env _ \
+    --jobs "$PARALLEL_SEEDS" \
+    --halt now,fail=1 \
+    do_branch < $BRANCHES
 fi

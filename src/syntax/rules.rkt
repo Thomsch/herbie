@@ -174,8 +174,8 @@
 (define rules-info
   (list (ruler-manifest "bool.json" '(bools) 'bool bool-op-table)
         (ruler-manifest "rational.json" '(arithmetic) 'real rational-op-table)
-        (ruler-manifest "exponential.json" '(arithmetic) 'real rational-op-table)
-        (ruler-manifest "trig.json" '(arithmetic) 'real rational-op-table)
+        ; (ruler-manifest "exponential.json" '(arithmetic) 'real rational-op-table)
+        ; (ruler-manifest "trig.json" '(arithmetic) 'real rational-op-table)
   ))
 
 ;
@@ -242,101 +242,166 @@
 
 (require (submod "." web))
 
+; Returns the path of the newest Ruler report
+(define (get-newest-report)
+  (log! "Scraping reports at `~a` ...\n" nightly-root)
+
+  (define nightly-html (get-html nightly-root))
+  (define report-paths (filter (λ (p) (not (string=? p "../")))
+                              (get-html-element '(a #:href) nightly-html)))
+  (log! " Found ~a reports\n" (length report-paths))
+
+  (define reports-on-branch
+    (reap [sow]
+      (for ([path (in-list report-paths)])
+        (match (string-split path "%3A")
+          [(list time host branch commit)
+          (when (string=? nightly-branch branch)
+            (sow (list path time commit)))]
+          [_
+          (log! "Invalid report: ~a" path)]))))
+  (log! " ~a reports associated with branch `~a`\n" (length reports-on-branch) nightly-branch)
+
+  (define (report>? r1 r2)
+    (match-define (list p1 time1 commit1) r1)
+    (match-define (list p2 time2 commit2) r2)
+    (> (string->number time1) (string->number time2)))
+  
+  (when (empty? reports-on-branch)
+    (error 'load-rules-from-ruler "No reports matching branch: ~a" nightly-branch))
+  (define newest (first (sort reports-on-branch report>?)))
+  (match-define (list report-path report-time commit) newest)
+  (log! " Newest report has timestamp: ~a\n" report-time)
+  (log! " Newest report has commit: ~a\n" (substring commit 0 (- (string-length commit) 1)))
+
+  report-path)
+
+; Registers a rule set
+(define (register-ruler-ruleset! name groups var-ctx rules)
+  (log! "  Registering ruleset `~a` ...\n" name)
+  (log! "   Groups: ~a\n" groups)
+  (log! "   Vars:   ~a\n" var-ctx)
+  (log! "   Rules:  ~a\n" (length rules))
+  (register-ruleset*!
+    name groups var-ctx
+    (for/list ([rule (in-list rules)] [i (in-naturals 1)])
+      (match-define (list lhs rhs _) rule)
+      (define rule-name (string->symbol (format "~a-~a" name i)))
+      (log! "    ~a: ~a => ~a\n" rule-name lhs rhs)
+      (list rule-name lhs rhs))))
+
+; Loads a rules file (JSON) and adds the rules to Herbie's database
+(define (load-ruler-file! info json)
+  (match-define (ruler-manifest name groups type op-table) info)
+  (log! "  Parsing rules ...\n")
+  (define vars (mutable-set))
+  (define rules
+    (for/fold ([rules '()] #:result (reverse rules))
+              ([rule (in-list (hash-ref json 'rules))]
+                [counter (in-naturals 1)])
+      (match-define (list lhs rhs) (string-split rule " ==> "))
+      (define-values (rule* rule-vars) (parse-ruler-rule lhs rhs op-table))
+      (set-union! vars rule-vars)
+      (cond
+        [(and (set-member? features 'no-xor)
+              (or (set-member? (ops-in-expr (first rule*)) '^)
+                  (set-member? (ops-in-expr (second rule*)) '^)))
+          rules]
+        [else
+          (cons rule* rules)])))
+
+  (define-values (simplify non-simplify)
+    (let-values ([(simplify non-simplify) (partition (λ (r) (eq? (third r) 'simplify)) rules)])
+      (cond
+        [(and (eq? type 'bool) (set-member? features 'no-expansive-bool))
+          (values simplify (filter (λ (r) (not (symbol? (first r)))) non-simplify))]
+        [else
+          (values simplify non-simplify)])))
+
+  (define var-ctx (for/list ([v (in-set vars)]) (cons (string->symbol v) type)))
+  (register-ruler-ruleset! name groups var-ctx non-simplify)
+  (register-ruler-ruleset! (format "~a-simplify" name) (cons 'simplify groups) var-ctx simplify)
+
+  (log! "  Done\n")
+  (void))
+
 (define (load-rules-from-ruler!)
-  ; Returns the path of the newest Ruler report
-  (define (get-newest-report)
-    (log! "Scraping reports at `~a` ...\n" nightly-root)
-
-    (define nightly-html (get-html nightly-root))
-    (define report-paths (filter (λ (p) (not (string=? p "../")))
-                                (get-html-element '(a #:href) nightly-html)))
-    (log! " Found ~a reports\n" (length report-paths))
-
-    (define reports-on-branch
-      (reap [sow]
-        (for ([path (in-list report-paths)])
-          (match (string-split path "%3A")
-            [(list time host branch commit)
-            (when (string=? nightly-branch branch)
-              (sow (list path time commit)))]
-            [_
-            (log! "Invalid report: ~a" path)]))))
-    (log! " ~a reports associated with branch `~a`\n" (length reports-on-branch) nightly-branch)
-
-    (define (report>? r1 r2)
-      (match-define (list p1 time1 commit1) r1)
-      (match-define (list p2 time2 commit2) r2)
-      (> (string->number time1) (string->number time2)))
-    
-    (when (empty? reports-on-branch)
-      (error 'load-rules-from-ruler "No reports matching branch: ~a" nightly-branch))
-    (define newest (first (sort reports-on-branch report>?)))
-    (match-define (list report-path report-time commit) newest)
-    (log! " Newest report has timestamp: ~a\n" report-time)
-    (log! " Newest report has commit: ~a\n" (substring commit 0 (- (string-length commit) 1)))
-
-    report-path)
-
-  ; Registers a rule set
-  (define (register-ruler-ruleset! name groups var-ctx rules)
-    (log! "  Registering ruleset `~a` ...\n" name)
-    (log! "   Groups: ~a\n" groups)
-    (log! "   Vars:   ~a\n" var-ctx)
-    (log! "   Rules:  ~a\n" (length rules))
-    (register-ruleset*!
-      name groups var-ctx
-      (for/list ([rule (in-list rules)] [i (in-naturals 1)])
-        (match-define (list lhs rhs _) rule)
-        (define rule-name (string->symbol (format "~a-~a" name i)))
-        (log! "    ~a: ~a => ~a\n" rule-name lhs rhs)
-        (list rule-name lhs rhs))))
-
-  ; Loads a rules file (JSON) and adds the rules to Herbie's database
-  (define (load-ruler-file! info url)
-    (log! " Loading rules at `~a` ...\n" url)
-    (match-define (ruler-manifest name groups type op-table) info)
-    (define json (get-json url))
-
-    (log! "  Parsing rules ...\n")
-    (define vars (mutable-set))
-    (define rules
-      (for/fold ([rules '()] #:result (reverse rules))
-                ([rule (in-list (hash-ref json 'rules))]
-                 [counter (in-naturals 1)])
-        (match-define (list lhs rhs) (string-split rule " ==> "))
-        (define-values (rule* rule-vars) (parse-ruler-rule lhs rhs op-table))
-        (set-union! vars rule-vars)
-        (cond
-          [(and (set-member? features 'no-xor)
-                (or (set-member? (ops-in-expr (first rule*)) '^)
-                    (set-member? (ops-in-expr (second rule*)) '^)))
-           rules]
-          [else
-           (cons rule* rules)])))
-
-    (define-values (simplify non-simplify)
-      (let-values ([(simplify non-simplify) (partition (λ (r) (eq? (third r) 'simplify)) rules)])
-        (cond
-          [(and (eq? type 'bool) (set-member? features 'no-expansive-bool))
-           (values simplify (filter (λ (r) (not (symbol? (first r)))) non-simplify))]
-          [else
-           (values simplify non-simplify)])))
-
-    (define var-ctx (for/list ([v (in-set vars)]) (cons (string->symbol v) type)))
-    (register-ruler-ruleset! name groups var-ctx non-simplify)
-    (register-ruler-ruleset! (format "~a-simplify" name) (cons 'simplify groups) var-ctx simplify)
-
-    (log! "  Done\n")
-    (void))
-
   (define report-path (get-newest-report)) 
   (define json-dir (build-path nightly-root report-path json-path))
   (log! "Looking for rules at `~a` ...\n" json-dir)
   (for ([info (in-list rules-info)])
     (define json-path (build-path json-dir (ruler-manifest-filename info)))
-    (load-ruler-file! info (path->string json-path)))
+    (log! " Loading rules at `~a` ...\n" json-path)
+    (load-ruler-file! info (get-json (path->string json-path))))
 
   (void))
 
 ; Invoked when this module is instantiated
 (load-rules-from-ruler!)
+
+
+(load-ruler-file!
+  (ruler-manifest "exponential-lifting" '(exponential) 'real rational-op-table)
+  (hash
+    'rules
+    '("(pow ?a ?b) ==> (exp (* ?b (log ?a)))"
+      "(sqrt ?a) ==> (pow ?a 1/2)"
+      "(cbrt ?a) ==> (pow ?a 1/3)"
+      "(exp (* ?b (log ?a))) ==> (pow ?a ?b)"
+      "(pow ?a 1/2) ==> (sqrt ?a)"
+      "(pow ?a 1/3) ==> (cbrt ?a)")))
+
+(load-ruler-file!
+  (ruler-manifest "exponential-prior" '(exponential) 'real rational-op-table)
+  (hash
+    'rules
+    '("(exp (+ ?a ?b)) ==> (* (exp ?a) (exp ?b))"
+      "(exp (~ ?a)) ==> (/ 1 (exp ?a))"
+      "(* (exp ?a) (exp ?b)) ==> (exp (+ ?a ?b))"
+      "(/ 1 (exp ?a)) ==> (exp (~ ?a))"
+      "(exp 0) ==> 1"
+      "(log (exp ?a)) ==> ?a"
+      "(exp (log ?a)) ==> ?a")))
+
+(load-ruler-file!
+  (ruler-manifest "trigometric-lifting" '(trigonometry) 'real rational-op-table)
+  (hash
+    'rules
+    '("(sin ?a) ==> (/ (- (cis ?a) (cis (~ ?a))) (* 2 I))"
+      "(/ (- (cis ?a) (cis (~ ?a))) (* 2 I)) ==> (sin ?a)"
+      "(cos ?a) ==> (/ (+ (cis ?a) (cis (~ ?a))) 2)"
+      "(/ (+ (cis ?a) (cis (~ ?a))) 2) ==> (cos ?a)"
+      "(tan ?a) ==> (* I (/ (- (cis (~ ?a)) (cis ?a)) (+ (cis (~ ?a)) (cis ?a))))"
+      "(* I (/ (- (cis (~ ?a)) (cis ?a)) (+ (cis (~ ?a)) (cis ?a)))) ==> (tan ?a)"
+      "(sin ?a) ==> (/ (- (* I (cis (~ ?a))) (* I (cis ?a))) 2)"
+      "(/ (- (* I (cis (~ ?a))) (* I (cis ?a))) 2) ==> (sin ?a)"
+      "(cos ?a) ==> (/ (+ (* I (cis ?a)) (* I (cis (~ ?a)))) (* 2 I))"
+      "(/ (+ (* I (cis ?a)) (* I (cis (~ ?a)))) (* 2 I)) ==> (cos ?a)"
+      "(tan ?a) ==> (/ (sin ?a) (cos ?a))"
+      "(/ (sin ?a) (cos ?a)) ==> (tan ?a)"
+      "(* (cos ?a) (cos ?b)) ==> (/ (+ (+ (cis (- ?a ?b)) (cis (~ (- ?a ?b)))) (+ (cis (+ ?a ?b)) (cis (~ (+ ?a ?b))))) 4)"
+      "(* (sin ?a) (sin ?b)) ==> (/ (- (+ (cis (- ?a ?b)) (cis (~ (- ?a ?b)))) (+ (cis (+ ?a ?b)) (cis (~ (+ ?a ?b))))) 4)"
+      "(* (cos ?a) (sin ?b)) ==> (/ (+ (- (cis (+ ?a ?b)) (cis (~ (+ ?a ?b)))) (- (cis (- ?b ?a)) (cis (~ (- ?b ?a))))) (* 4 I))"
+      "(* (sin ?a) (cos ?b)) ==> (/ (+ (- (cis (+ ?a ?b)) (cis (~ (+ ?a ?b)))) (- (cis (- ?a ?b)) (cis (~ (- ?a ?b))))) (* 4 I))"
+      "(sqr ?a) ==> (* ?a ?a)"
+      "(* ?a ?a) ==> (sqr ?a)")))
+
+(load-ruler-file!
+  (ruler-manifest "trigometric-prior" '(trigonometry) 'real rational-op-table)
+  (hash
+    'rules
+    '("(+ PI PI) ==> (* 2 PI)"
+      "(* 2 PI) ==> (+ PI PI)"
+      "(cis 0) ==> 1"
+      "(cis (/ PI 2)) ==> I"
+      "(cis (~ (/ PI 2))) ==> (~ I)"
+      "(cis PI) ==> -1"
+      "(cis (+ ?a ?b)) ==> (* (cis ?a) (cis ?b))"
+      "(* (cis ?a) (cis ?b)) ==> (cis (+ ?a ?b))"
+      "(cis (- ?a ?b)) ==> (* (cis ?a) (cis (~ ?b)))"
+      "(* (cis ?a) (cis (~ ?b))) ==> (cis (- ?a ?b))"
+      "(cis (~ ?a)) ==> (/ 1 (cis ?a))"
+      "(/ 1 (cis ?a)) ==> (cis (~ ?a))"
+      "(* (cis ?a) (cis (~ ?a))) ==> 1"
+      "(/ 1 I) ==> (~ I)"
+      "(* I I) ==> -1")))

@@ -25,6 +25,10 @@
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;; constants ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
+; TODO: this is wrong
+(define-operator-impl (I I.f64) binary64
+  [fl (const +nan.0)])
+
 (define-operator-impl (PI PI.f64) binary64
   [fl (const pi)])
 
@@ -66,6 +70,8 @@
 (define-syntax-rule (define-2ary-libm-operators op ...)
   (begin (define-2ary-libm-operator op) ...))
 
+;; TODO: this is wrong
+(define-operator-impl (cis cis.f64 binary64) binary64 [fl (λ (x) +nan.0)])
 
 (define-operator-impl (neg neg.f64 binary64) binary64 [fl -])
 (define-operator-impl (+ +.f64 binary64 binary64) binary64 [fl +])

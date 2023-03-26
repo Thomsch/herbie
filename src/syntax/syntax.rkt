@@ -85,6 +85,7 @@
   (bf- x (bf* (bfround (bf/ x mod)) mod)))
 
 (define-1ary-real-operators
+ [cis (λ (x) (ival +nan.bf)) (λ (x) +nan.bf)]   ;; TODO: this is wrong
  [neg bf- ival-neg]
  [acos bfacos ival-acos]
  [acosh bfacosh ival-acosh]
@@ -297,6 +298,11 @@
   (for/or ([name (operator-all-impls 'convert)])
     (and (equal? (operator-info name 'itype) (list repr))
          name)))
+
+; TODO: this is wrong
+(define-operator (I) real
+  [bf (λ () +nan.bf)]
+  [ival (λ () (ival +nan.bf))])
 
 (define-operator (PI) real
   [bf (λ () pi.bf)] 

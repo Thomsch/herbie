@@ -48,6 +48,10 @@ impl<'a> CostFunction<Math> for AltCost<'a> {
                     return usize::MAX;
                 }
             }
+        } else if let Math::Other(op, _) = enode {
+            if op.as_str() == "cis" || op.as_str() == "I" {
+                return usize::MAX;
+            }
         }
 
         enode.fold(1, |sum, id| usize::saturating_add(sum, costs(id)))

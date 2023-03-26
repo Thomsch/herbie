@@ -91,6 +91,10 @@
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;; constants ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
+; TODO: this is wrong
+(define-operator-impl (I I.f32) binary32
+  [fl (const +nan.0)])
+
 (define-operator-impl (PI PI.f32) binary32
   [fl (const (->float32 pi))])
 
@@ -141,6 +145,8 @@
 (define (bffma x y z)
   (bf+ (bf* x y) z))
 
+;; TODO: this is wrong
+(define-operator-impl (cis cis.f32 binary32) binary32 [fl (λ (x) +nan.0)])
 
 (define-operator-impl (neg neg.f32 binary32) binary32 [fl fl32-])
 (define-operator-impl (+ +.f32 binary32 binary32) binary32 [fl fl32+])
